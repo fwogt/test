@@ -1,0 +1,124 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local shovelName = "Shovel [Destroy Plants]"
+local sprinklerTypes = {
+    "Basic Sprinkler",
+    "Advanced Sprinkler",
+    "Master Sprinkler",
+    "Godly Sprinkler",
+    "Honey Sprinkler",
+    "Chocolate Sprinkler"
+}
+local selectedSprinklers = {}
+local CoreFunctions = {}
+
+function CoreFunctions.autoEquipShovel()
+    print("[DEBUG] Attempting to equip shovel: " .. shovelName)
+    local shovel = player.Backpack:FindFirstChild(shovelName)
+    if shovel then
+        shovel.Parent = player.Character
+        print("[DEBUG] Shovel equipped successfully")
+    else
+        print("[DEBUG] Failed to find shovel: " .. shovelName)
+    end
+    return shovel
+end
+
+function CoreFunctions.deleteAllSprinklers()
+    print("[DEBUG] Starting sprinkler deletion process for player: " .. player.Name)
+
+    -- Find player's farm
+    local farmFolder = Workspace:FindFirstChild("Farm")
+    if not farmFolder then
+        print("[DEBUG] Farm folder not found in workspace")
+        return
+    end
+    print("[DEBUG] Farm folder found")
+
+    local playerFarm
+    for _, farm in ipairs(farmFolder:GetChildren()) do
+        local ownerData = farm:FindFirstChild("Important") and farm.Important:FindFirstChild("Data") and farm.Important.Data:FindFirstChild("Owner")
+        if ownerData and ownerData.Value == player.Name then
+            playerFarm = farm
+            print("[DEBUG] Player's farm found: " .. farm.Name)
+            break
+        end
+    end
+
+    if not playerFarm then
+        print("[DEBUG] Player's farm not found")
+        return
+    end
+
+    -- Get Objects_Physical folder
+    local objectsFolder = playerFarm:FindFirstChild("Important") and playerFarm.Important:FindFirstChild("Objects_Physical")
+    if not objectsFolder then
+        print("[DEBUG] Objects_Physical folder not found in player's farm")
+        return
+    end
+    print("[DEBUG] Objects_Physical folder found")
+
+    local shovel = CoreFunctions.autoEquipShovel()
+    task.wait(0.5)
+
+    if not shovel then
+        print("[DEBUG] Shovel not equipped or found")
+        return
+    end
+
+    -- Attempt to find a script within the shovel tool
+    local shovelClient = shovel:FindFirstChild("MainScript") or shovel:FindFirstChildWhichIsA("Script") or shovel:FindFirstChildWhichIsA("LocalScript")
+    print("[DEBUG] shovelClient set to: " .. tostring(shovelClient) .. " (Class: " .. (shovelClient and shovelClient.ClassName or "nil") .. ")")
+
+    if not shovelClient then
+        print("[DEBUG] shovelClient not defined after search")
+        return
+    end
+    print("[DEBUG] shovelClient found")
+
+    local success, destroyEnv = pcall(function()
+        return getsenv and getsenv(shovelClient) or nil
+    end)
+
+    if not success or not destroyEnv then
+        print("[DEBUG] Failed to access shovel environment. Success: " .. tostring(success) .. ", destroyEnv: " .. tostring(destroyEnv) .. ", Error: " .. (success and "" or debug.traceback()))
+        return
+    end
+    print("[DEBUG] Shovel environment accessed successfully")
+
+    local deletedCount = 0
+    local targetSprinklers = sprinklerTypes
+    print("[DEBUG] Target sprinkler types: " .. table.concat(targetSprinklers, ", "))
+    for _, obj in ipairs(objectsFolder:GetChildren()) do
+        for _, typeName in ipairs(targetSprinklers) do
+            if obj.Name == typeName then
+                print("[DEBUG] Attempting to delete sprinkler: " .. obj.Name)
+                pcall(function()
+                    if destroyEnv and destroyEnv.Destroy and typeof(destroyEnv.Destroy) == "function" then
+                        destroyEnv.Destroy(obj)
+                        print("[DEBUG] Client-side destroy called for: " .. obj.Name)
+                    end
+                    if DeleteObject then
+                        DeleteObject:FireServer(obj)
+                        print("[DEBUG] DeleteObject fired for: " .. obj.Name)
+                    end
+                    if RemoveItem then
+                        RemoveItem:FireServer(obj)
+                        print("[DEBUG] RemoveItem fired for: " .. obj.Name)
+                    end
+                    deletedCount = deletedCount + 1
+                end)
+                print("[DEBUG] Deletion attempt completed for: " .. obj.Name)
+            end
+        end
+    end
+    print("[DEBUG] Sprinkler deletion completed. Total deleted: " .. deletedCount)
+end
+
+-- Execute the deletion
+print("[DEBUG] Initiating auto-delete sprinklers script")
+CoreFunctions.deleteAllSprinklers()
+
+return CoreFunctions

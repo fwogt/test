@@ -1,8 +1,14 @@
+-- Auto Delete Sprinklers - Standalone Script
+-- Extracted from DEMONHUB and optimized for standalone use
+
+-- Services
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
-local player = Players.LocalPlayer
-local shovelName = "Shovel [Destroy Plants]"
+local LocalPlayer = Players.LocalPlayer
+
+-- Configuration
 local sprinklerTypes = {
     "Basic Sprinkler",
     "Advanced Sprinkler",
@@ -11,114 +17,266 @@ local sprinklerTypes = {
     "Honey Sprinkler",
     "Chocolate Sprinkler"
 }
-local selectedSprinklers = {}
+
+-- State
+local isRunning = false
+local deleteConnection
+
+-- Core Functions
 local CoreFunctions = {}
 
+-- Auto-equip shovel function
 function CoreFunctions.autoEquipShovel()
-    print("[DEBUG] Attempting to equip shovel: " .. shovelName)
-    local shovel = player.Backpack:FindFirstChild(shovelName)
-    if shovel then
-        shovel.Parent = player.Character
-        print("[DEBUG] Shovel equipped successfully")
-    else
-        print("[DEBUG] Failed to find shovel: " .. shovelName)
+    local shovelName = "Shovel [Destroy Plants]"
+    local shovel = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(shovelName)
+    if not shovel then
+        shovel = LocalPlayer.Backpack:FindFirstChild(shovelName)
+        if shovel then
+            shovel.Parent = LocalPlayer.Character
+        end
     end
     return shovel
 end
 
-function CoreFunctions.deleteAllSprinklers()
-    print("[DEBUG] Starting sprinkler deletion process for player: " .. player.Name)
-
-    -- Find player's farm
+-- Find player's farm
+function CoreFunctions.findPlayerFarm()
     local farmFolder = Workspace:FindFirstChild("Farm")
     if not farmFolder then
-        print("[DEBUG] Farm folder not found in workspace")
-        return
+        warn("Farm folder not found in workspace")
+        return nil
     end
-    print("[DEBUG] Farm folder found")
 
-    local playerFarm
     for _, farm in ipairs(farmFolder:GetChildren()) do
-        local ownerData = farm:FindFirstChild("Important") and farm.Important:FindFirstChild("Data") and farm.Important.Data:FindFirstChild("Owner")
-        if ownerData and ownerData.Value == player.Name then
-            playerFarm = farm
-            print("[DEBUG] Player's farm found: " .. farm.Name)
-            break
+        local ownerData = farm:FindFirstChild("Important") 
+            and farm.Important:FindFirstChild("Data") 
+            and farm.Important.Data:FindFirstChild("Owner")
+        if ownerData and ownerData.Value == LocalPlayer.Name then
+            return farm
         end
     end
+    
+    warn("Player's farm not found")
+    return nil
+end
 
-    if not playerFarm then
-        print("[DEBUG] Player's farm not found")
-        return
-    end
+-- Get objects folder from player's farm
+function CoreFunctions.getObjectsFolder()
+    local playerFarm = CoreFunctions.findPlayerFarm()
+    if not playerFarm then return nil end
 
-    -- Get Objects_Physical folder
-    local objectsFolder = playerFarm:FindFirstChild("Important") and playerFarm.Important:FindFirstChild("Objects_Physical")
+    local objectsFolder = playerFarm:FindFirstChild("Important") 
+        and playerFarm.Important:FindFirstChild("Objects_Physical")
     if not objectsFolder then
-        print("[DEBUG] Objects_Physical folder not found in player's farm")
-        return
+        warn("Objects_Physical folder not found in player's farm")
+        return nil
     end
-    print("[DEBUG] Objects_Physical folder found")
 
-    local shovel = CoreFunctions.autoEquipShovel()
-    task.wait(0.5)
+    return objectsFolder
+end
 
+-- Delete all sprinklers of specified types
+function CoreFunctions.deleteSprinklers(sprinklerArray)
+    local targetSprinklers = sprinklerArray or sprinklerTypes
+    
+    if #targetSprinklers == 0 then
+        print("No sprinkler types specified for deletion")
+        return 0
+    end
+
+    -- Ensure shovel is equipped
+    local shovel = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Shovel [Destroy Plants]")
     if not shovel then
-        print("[DEBUG] Shovel not equipped or found")
-        return
+        CoreFunctions.autoEquipShovel()
+        task.wait(0.5)
+        shovel = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Shovel [Destroy Plants]")
     end
 
-    -- Attempt to find a script within the shovel tool
-    local shovelClient = shovel:FindFirstChild("MainScript") or shovel:FindFirstChildWhichIsA("Script") or shovel:FindFirstChildWhichIsA("LocalScript")
-    print("[DEBUG] shovelClient set to: " .. tostring(shovelClient) .. " (Class: " .. (shovelClient and shovelClient.ClassName or "nil") .. ")")
-
-    if not shovelClient then
-        print("[DEBUG] shovelClient not defined after search")
-        return
+    local objectsFolder = CoreFunctions.getObjectsFolder()
+    if not objectsFolder then
+        warn("Could not access objects folder")
+        return 0
     end
-    print("[DEBUG] shovelClient found")
 
-    local success, destroyEnv = pcall(function()
-        return getsenv and getsenv(shovelClient) or nil
-    end)
-
-    if not success or not destroyEnv then
-        print("[DEBUG] Failed to access shovel environment. Success: " .. tostring(success) .. ", destroyEnv: " .. tostring(destroyEnv) .. ", Error: " .. (success and "" or debug.traceback()))
-        return
-    end
-    print("[DEBUG] Shovel environment accessed successfully")
-
-    local deletedCount = 0
-    local targetSprinklers = sprinklerTypes
-    print("[DEBUG] Target sprinkler types: " .. table.concat(targetSprinklers, ", "))
-    for _, obj in ipairs(objectsFolder:GetChildren()) do
-        for _, typeName in ipairs(targetSprinklers) do
-            if obj.Name == typeName then
-                print("[DEBUG] Attempting to delete sprinkler: " .. obj.Name)
-                pcall(function()
-                    if destroyEnv and destroyEnv.Destroy and typeof(destroyEnv.Destroy) == "function" then
-                        destroyEnv.Destroy(obj)
-                        print("[DEBUG] Client-side destroy called for: " .. obj.Name)
-                    end
-                    if DeleteObject then
-                        DeleteObject:FireServer(obj)
-                        print("[DEBUG] DeleteObject fired for: " .. obj.Name)
-                    end
-                    if RemoveItem then
-                        RemoveItem:FireServer(obj)
-                        print("[DEBUG] RemoveItem fired for: " .. obj.Name)
-                    end
-                    deletedCount = deletedCount + 1
-                end)
-                print("[DEBUG] Deletion attempt completed for: " .. obj.Name)
+    -- Try to get shovel environment for proper deletion
+    local destroyEnv = nil
+    if shovel then
+        local shovelClient = shovel:FindFirstChild("MainScript") 
+            or shovel:FindFirstChildWhichIsA("Script") 
+            or shovel:FindFirstChildWhichIsA("LocalScript")
+        
+        if shovelClient then
+            local success, env = pcall(function()
+                return getsenv and getsenv(shovelClient) or nil
+            end)
+            if success then
+                destroyEnv = env
             end
         end
     end
-    print("[DEBUG] Sprinkler deletion completed. Total deleted: " .. deletedCount)
+
+    local deletedCount = 0
+    local deletedTypes = {}
+
+    -- Delete sprinklers
+    for _, obj in ipairs(objectsFolder:GetChildren()) do
+        for _, typeName in ipairs(targetSprinklers) do
+            if obj.Name == typeName then
+                if not deletedTypes[typeName] then
+                    deletedTypes[typeName] = 0
+                end
+                deletedTypes[typeName] = deletedTypes[typeName] + 1
+                
+                -- Try multiple deletion methods
+                pcall(function()
+                    if destroyEnv and destroyEnv.Destroy and typeof(destroyEnv.Destroy) == "function" then
+                        destroyEnv.Destroy(obj)
+                    elseif obj and obj.Parent then
+                        obj:Destroy()
+                    end
+                    
+                    -- Try backup remote events if they exist
+                    local deleteObject = game:GetService("ReplicatedStorage"):FindFirstChild("DeleteObject")
+                    local removeItem = game:GetService("ReplicatedStorage"):FindFirstChild("RemoveItem")
+                    
+                    if deleteObject then
+                        deleteObject:FireServer(obj)
+                    end
+                    if removeItem then
+                        removeItem:FireServer(obj)
+                    end
+                end)
+                deletedCount = deletedCount + 1
+            end
+        end
+    end
+
+    -- Print results
+    if deletedCount > 0 then
+        print(string.format("Successfully deleted %d sprinklers:", deletedCount))
+        for typeName, count in pairs(deletedTypes) do
+            print(string.format("  - %s: %d", typeName, count))
+        end
+    else
+        print("No sprinklers found to delete")
+    end
+
+    return deletedCount
 end
 
--- Execute the deletion
-print("[DEBUG] Initiating auto-delete sprinklers script")
-CoreFunctions.deleteAllSprinklers()
+-- Delete all sprinklers (convenience function)
+function CoreFunctions.deleteAllSprinklers()
+    print("Starting sprinkler deletion process...")
+    return CoreFunctions.deleteSprinklers(sprinklerTypes)
+end
 
-return CoreFunctions
+-- Auto delete sprinklers continuously
+function CoreFunctions.startAutoDelete(interval)
+    if isRunning then
+        print("Auto delete is already running!")
+        return
+    end
+    
+    interval = interval or 5 -- Default 5 seconds between deletions
+    isRunning = true
+    
+    print(string.format("Starting auto delete sprinklers (interval: %d seconds)", interval))
+    print("Target sprinkler types:", table.concat(sprinklerTypes, ", "))
+    
+    deleteConnection = task.spawn(function()
+        while isRunning do
+            local deleted = CoreFunctions.deleteSprinklers(sprinklerTypes)
+            if deleted > 0 then
+                print(string.format("[Auto Delete] Deleted %d sprinklers", deleted))
+            end
+            
+            for i = 1, interval do
+                if not isRunning then break end
+                task.wait(1)
+            end
+        end
+    end)
+end
+
+-- Stop auto delete
+function CoreFunctions.stopAutoDelete()
+    if not isRunning then
+        print("Auto delete is not running!")
+        return
+    end
+    
+    isRunning = false
+    if deleteConnection then
+        task.cancel(deleteConnection)
+        deleteConnection = nil
+    end
+    print("Auto delete sprinklers stopped")
+end
+
+-- Check if auto delete is running
+function CoreFunctions.isAutoDeleteRunning()
+    return isRunning
+end
+
+-- Add custom sprinkler type
+function CoreFunctions.addSprinklerType(sprinklerName)
+    if not table.find(sprinklerTypes, sprinklerName) then
+        table.insert(sprinklerTypes, sprinklerName)
+        print("Added sprinkler type: " .. sprinklerName)
+        return true
+    end
+    print("Sprinkler type already exists: " .. sprinklerName)
+    return false
+end
+
+-- Remove sprinkler type
+function CoreFunctions.removeSprinklerType(sprinklerName)
+    for i, sprinkler in ipairs(sprinklerTypes) do
+        if sprinkler == sprinklerName then
+            table.remove(sprinklerTypes, i)
+            print("Removed sprinkler type: " .. sprinklerName)
+            return true
+        end
+    end
+    print("Sprinkler type not found: " .. sprinklerName)
+    return false
+end
+
+-- Get current sprinkler types
+function CoreFunctions.getSprinklerTypes()
+    return sprinklerTypes
+end
+
+-- Public API
+_G.SprinklerDeleter = {
+    -- Main functions
+    deleteAll = CoreFunctions.deleteAllSprinklers,
+    deleteSprinklers = CoreFunctions.deleteSprinklers,
+    
+    -- Auto delete functions
+    startAuto = CoreFunctions.startAutoDelete,
+    stopAuto = CoreFunctions.stopAutoDelete,
+    isRunning = CoreFunctions.isAutoDeleteRunning,
+    
+    -- Configuration functions
+    addType = CoreFunctions.addSprinklerType,
+    removeType = CoreFunctions.removeSprinklerType,
+    getTypes = CoreFunctions.getSprinklerTypes,
+    
+    -- Utility functions
+    equipShovel = CoreFunctions.autoEquipShovel,
+    findFarm = CoreFunctions.findPlayerFarm
+}
+
+-- Print usage instructions
+print("=== Sprinkler Deleter Loaded ===")
+print("Usage:")
+print("  _G.SprinklerDeleter.deleteAll() - Delete all sprinklers once")
+print("  _G.SprinklerDeleter.startAuto(5) - Start auto delete every 5 seconds")
+print("  _G.SprinklerDeleter.stopAuto() - Stop auto delete")
+print("  _G.SprinklerDeleter.isRunning() - Check if auto delete is running")
+print("  _G.SprinklerDeleter.getTypes() - Get list of sprinkler types")
+print("  _G.SprinklerDeleter.addType('Custom Sprinkler') - Add custom sprinkler type")
+print("Available sprinkler types:", table.concat(sprinklerTypes, ", "))
+print("================================")
+
+return _G.SprinklerDeleter
